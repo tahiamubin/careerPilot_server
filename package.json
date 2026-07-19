@@ -10,8 +10,10 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
-    "@napi-rs/canvas": "^0.1.x",
     "@google/generative-ai": "^0.24.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
