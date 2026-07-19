@@ -9,7 +9,7 @@ dotenv.config();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
 });
 const app = express();
 const port = process.env.PORT;
@@ -44,16 +44,40 @@ const client = new MongoClient(uri, {
 });
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const JWKS = createRemoteJWKSet(
+  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+);
 
 async function run() {
   try {
     //await client.connect();
+
+    const verifyToken = async (req, res, next) => {
+      const authHeader = req.headers.authorization;
+      //console.log("authorization header:", authorization)
+      if (!authHeader || !authHeader.startsWith("Bearer")) {
+        return res.status(401).json({ msg: "unauthorized" });
+      }
+      const token = authHeader.split(" ")[1];
+      if (!token) {
+        return res.status(401).json({ msg: "unauthorized" });
+      }
+      try {
+        const { payload } = await jwtVerify(token, JWKS);
+        console.log("payload", payload);
+        req.user = payload;
+        next();
+      } catch (error) {
+        return res.status(401).json({ msg: "unauthorized" });
+      }
+    };
     const database = client.db("career_pilot");
     const jobCollection = database.collection("jobs");
 
     // POST /jobs - creates a new job
-    app.post("/jobs", async (req, res) => {
+    app.post("/jobs", verifyToken,  async (req, res) => {
       try {
         const data = req.body;
         const result = await jobCollection.insertOne(data);
@@ -91,7 +115,7 @@ async function run() {
     });
 
     // DELETE /jobs/:userId - deletes a job by id (uses req.params.userId)
-    app.delete("/jobs/:userId", async (req, res) => {
+    app.delete("/jobs/:userId", verifyToken, async (req, res) => {
       try {
         const { userId } = req.params;
         const result = await jobCollection.deleteOne({
@@ -104,7 +128,7 @@ async function run() {
     });
 
     // PATCH /jobs/:userId - updates a job by id (uses req.params.userId)
-    app.patch("/jobs/:userId", async (req, res) => {
+    app.patch("/jobs/:userId", verifyToken, async (req, res) => {
       try {
         const { userId } = req.params;
         const updatedData = req.body;
@@ -160,110 +184,132 @@ Write only the cover letter text. No preamble, no explanation, no markdown forma
       }
     });
 
-    app.post("/ai/resume-analyze", (req, res, next) => {
-      upload.single("resume")(req, res, (err) => {
-        if (err instanceof multer.MulterError) {
-          if (err.code === "LIMIT_FILE_SIZE") {
-            return res.status(400).json({ message: "File is too large. Max size is 5MB." });
+    app.post(
+      "/ai/resume-analyze",
+      (req, res, next) => {
+        upload.single("resume")(req, res, (err) => {
+          if (err instanceof multer.MulterError) {
+            if (err.code === "LIMIT_FILE_SIZE") {
+              return res
+                .status(400)
+                .json({ message: "File is too large. Max size is 5MB." });
+            }
+            return res
+              .status(400)
+              .json({ message: `Upload error: ${err.message}` });
+          } else if (err) {
+            return res
+              .status(500)
+              .json({ message: `Unknown upload error: ${err.message}` });
           }
-          return res.status(400).json({ message: `Upload error: ${err.message}` });
-        } else if (err) {
-          return res.status(500).json({ message: `Unknown upload error: ${err.message}` });
-        }
-        next();
-      });
-    }, async (req, res) => {
-      try {
-        if (!req.file) {
-          return res.status(400).json({ message: "No file uploaded. Please upload a resume." });
-        }
-
-        const originalName = req.file.originalname || "";
-        const extension = originalName.split(".").pop().toLowerCase();
-        const mimeType = req.file.mimetype || "";
-
-        const allowedExtensions = ["pdf", "docx", "txt"];
-        if (!allowedExtensions.includes(extension)) {
-          return res.status(400).json({
-            message: "Unsupported file type. Only .pdf, .docx, and .txt files are allowed."
-          });
-        }
-
-        let extractedText = "";
-
-        if (extension === "pdf" || mimeType === "application/pdf") {
-          try {
-            const data = await pdfParse(req.file.buffer);
-            extractedText = data.text;
-          } catch (pdfErr) {
-            console.error("PDF parse error:", pdfErr);
-            return res.status(400).json({ message: "Could not read the PDF file. It might be corrupt." });
+          next();
+        });
+      },
+      async (req, res) => {
+        try {
+          if (!req.file) {
+            return res
+              .status(400)
+              .json({ message: "No file uploaded. Please upload a resume." });
           }
-        } else if (
-          extension === "docx" ||
-          mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ) {
-          try {
-            const result = await mammoth.extractRawText({ buffer: req.file.buffer });
-            extractedText = result.value;
-          } catch (docxErr) {
-            console.error("DOCX parse error:", docxErr);
-            return res.status(400).json({ message: "Could not read the DOCX file. It might be corrupt." });
+
+          const originalName = req.file.originalname || "";
+          const extension = originalName.split(".").pop().toLowerCase();
+          const mimeType = req.file.mimetype || "";
+
+          const allowedExtensions = ["pdf", "docx", "txt"];
+          if (!allowedExtensions.includes(extension)) {
+            return res.status(400).json({
+              message:
+                "Unsupported file type. Only .pdf, .docx, and .txt files are allowed.",
+            });
           }
-        } else {
-          extractedText = req.file.buffer.toString("utf8");
-        }
 
-        if (!extractedText || extractedText.trim() === "") {
-          return res.status(400).json({ message: "Uploaded file is empty or could not be read." });
-        }
+          let extractedText = "";
 
-        const prompt = `Analyze this resume text. Return ONLY valid JSON in this exact format, no markdown, no extra text:
+          if (extension === "pdf" || mimeType === "application/pdf") {
+            try {
+              const data = await pdfParse(req.file.buffer);
+              extractedText = data.text;
+            } catch (pdfErr) {
+              console.error("PDF parse error:", pdfErr);
+              return res.status(400).json({
+                message: "Could not read the PDF file. It might be corrupt.",
+              });
+            }
+          } else if (
+            extension === "docx" ||
+            mimeType ===
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          ) {
+            try {
+              const result = await mammoth.extractRawText({
+                buffer: req.file.buffer,
+              });
+              extractedText = result.value;
+            } catch (docxErr) {
+              console.error("DOCX parse error:", docxErr);
+              return res.status(400).json({
+                message: "Could not read the DOCX file. It might be corrupt.",
+              });
+            }
+          } else {
+            extractedText = req.file.buffer.toString("utf8");
+          }
+
+          if (!extractedText || extractedText.trim() === "") {
+            return res.status(400).json({
+              message: "Uploaded file is empty or could not be read.",
+            });
+          }
+
+          const prompt = `Analyze this resume text. Return ONLY valid JSON in this exact format, no markdown, no extra text:
 { "summary": "2-3 sentence professional summary of the candidate", "skills": ["skill1", "skill2", ...] }
 
 Resume text:
 ${extractedText}`;
 
-        const model = genAI.getGenerativeModel({
-          model: "gemini-3.5-flash",
-        });
+          const model = genAI.getGenerativeModel({
+            model: "gemini-3.5-flash",
+          });
 
-        const result = await model.generateContent(prompt);
-        let responseText = result.response.text();
+          const result = await model.generateContent(prompt);
+          let responseText = result.response.text();
 
-        let cleanText = responseText.trim();
-        if (cleanText.startsWith("```json")) {
-          cleanText = cleanText.substring(7);
-        } else if (cleanText.startsWith("```")) {
-          cleanText = cleanText.substring(3);
+          let cleanText = responseText.trim();
+          if (cleanText.startsWith("```json")) {
+            cleanText = cleanText.substring(7);
+          } else if (cleanText.startsWith("```")) {
+            cleanText = cleanText.substring(3);
+          }
+          if (cleanText.endsWith("```")) {
+            cleanText = cleanText.substring(0, cleanText.length - 3);
+          }
+          cleanText = cleanText.trim();
+
+          let parsedData;
+          try {
+            parsedData = JSON.parse(cleanText);
+          } catch (jsonErr) {
+            console.error("Gemini JSON parsing failure:", responseText);
+            parsedData = {
+              summary: cleanText,
+              skills: [],
+            };
+          }
+
+          res.json({
+            summary: parsedData.summary || "",
+            skills: Array.isArray(parsedData.skills) ? parsedData.skills : [],
+          });
+        } catch (error) {
+          console.error("Resume analyze route error:", error);
+          res
+            .status(500)
+            .json({ message: "AI Analysis failed: " + error.message });
         }
-        if (cleanText.endsWith("```")) {
-          cleanText = cleanText.substring(0, cleanText.length - 3);
-        }
-        cleanText = cleanText.trim();
-
-        let parsedData;
-        try {
-          parsedData = JSON.parse(cleanText);
-        } catch (jsonErr) {
-          console.error("Gemini JSON parsing failure:", responseText);
-          parsedData = {
-            summary: cleanText,
-            skills: []
-          };
-        }
-
-        res.json({
-          summary: parsedData.summary || "",
-          skills: Array.isArray(parsedData.skills) ? parsedData.skills : []
-        });
-
-      } catch (error) {
-        console.error("Resume analyze route error:", error);
-        res.status(500).json({ message: "AI Analysis failed: " + error.message });
-      }
-    });
-
+      },
+    );
 
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!",

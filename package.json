@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
+  
   },
   "keywords": [],
   "author": "",
@@ -14,6 +15,7 @@
     "@google/generative-ai": "^0.24.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "jose-cjs": "^6.2.3",
     "mammoth": "^1.12.0",
     "mongodb": "^7.5.0",
     "multer": "^2.2.0",
