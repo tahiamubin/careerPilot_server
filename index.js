@@ -1,5 +1,6 @@
 const express = require("express");
 const dotenv = require("dotenv");
+const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const multer = require("multer");
 const pdfParse = require("pdf-parse");
@@ -50,34 +51,69 @@ const JWKS = createRemoteJWKSet(
   new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
 );
 
+// const verifyToken = async (req, res, next) => {
+//   const authHeader = req.headers.authorization;
+//   console.log("authorization header:", authHeader); // ← add
+
+//   if (!authHeader || !authHeader.startsWith("Bearer")) {
+//     return res.status(401).json({ msg: "unauthorized" });
+//   }
+//   const token = authHeader.split(" ")[1];
+//   console.log("extracted token:", token); // ← add
+
+//   if (!token) {
+//     return res.status(401).json({ msg: "unauthorized" });
+//   }
+//   try {
+//     const { payload } = await jwtVerify(token, JWKS);
+//     console.log("payload", payload);
+//     req.user = payload;
+//     next();
+//   } catch (error) {
+//     console.error("JWT verify error:", error.name, "-", error.message); // ← add
+//     return res.status(401).json({ msg: "unauthorized" });
+//   }
+// };
+
+const verifyToken = async (req, res, next) => {
+  console.log("verifyToken middleware hit"); // ← confirms request even arrives here
+  const authHeader = req.headers.authorization;
+  //console.log("authorization header:", authHeader);
+
+  if (!authHeader || !authHeader.startsWith("Bearer")) {
+    //console.log("missing/invalid auth header, rejecting"); // ← tells us if it stops here
+    return res.status(401).json({ msg: "unauthorized" });
+  }
+  const token = authHeader.split(" ")[1];
+  console.log("extracted token:", token);
+
+  if (!token) {
+    return res.status(401).json({ msg: "unauthorized" });
+  }
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    console.log("payload", payload);
+    req.user = payload;
+    next();
+  } catch (error) {
+    console.error("=== JWT VERIFICATION FAILURE ===");
+    console.error("Error Name:", error.name);
+    console.error("Error Message:", error.message);
+    console.error("Error Stack:", error.stack);
+    console.error("Full Error Object:", error);
+    console.error("================================");
+    return res.status(401).json({ msg: "unauthorized" });
+  }
+};
 async function run() {
   try {
     //await client.connect();
 
-    const verifyToken = async (req, res, next) => {
-      const authHeader = req.headers.authorization;
-      //console.log("authorization header:", authorization)
-      if (!authHeader || !authHeader.startsWith("Bearer")) {
-        return res.status(401).json({ msg: "unauthorized" });
-      }
-      const token = authHeader.split(" ")[1];
-      if (!token) {
-        return res.status(401).json({ msg: "unauthorized" });
-      }
-      try {
-        const { payload } = await jwtVerify(token, JWKS);
-        console.log("payload", payload);
-        req.user = payload;
-        next();
-      } catch (error) {
-        return res.status(401).json({ msg: "unauthorized" });
-      }
-    };
     const database = client.db("career_pilot");
     const jobCollection = database.collection("jobs");
 
     // POST /jobs - creates a new job
-    app.post("/jobs", verifyToken,  async (req, res) => {
+    app.post("/jobs", verifyToken, async (req, res) => {
       try {
         const data = req.body;
         const result = await jobCollection.insertOne(data);
