@@ -51,29 +51,6 @@ const JWKS = createRemoteJWKSet(
   new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
 );
 
-// const verifyToken = async (req, res, next) => {
-//   const authHeader = req.headers.authorization;
-//   console.log("authorization header:", authHeader); // ← add
-
-//   if (!authHeader || !authHeader.startsWith("Bearer")) {
-//     return res.status(401).json({ msg: "unauthorized" });
-//   }
-//   const token = authHeader.split(" ")[1];
-//   console.log("extracted token:", token); // ← add
-
-//   if (!token) {
-//     return res.status(401).json({ msg: "unauthorized" });
-//   }
-//   try {
-//     const { payload } = await jwtVerify(token, JWKS);
-//     console.log("payload", payload);
-//     req.user = payload;
-//     next();
-//   } catch (error) {
-//     console.error("JWT verify error:", error.name, "-", error.message); // ← add
-//     return res.status(401).json({ msg: "unauthorized" });
-//   }
-// };
 
 const verifyToken = async (req, res, next) => {
   console.log("verifyToken middleware hit"); // ← confirms request even arrives here
